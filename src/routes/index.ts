@@ -1,4 +1,3 @@
-import { getBodyBuffer } from '@/utils/body';
 import {
   getProxyHeaders,
   getAfterResponseHeaders,
@@ -11,6 +10,11 @@ import {
 } from '@/utils/turnstile';
 
 export default defineEventHandler(async (event) => {
+  setResponseHeaders(event, {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Expose-Headers': '*',
+    'Cache-Control': 'no-store',
+  });
   // Handle preflight CORS requests
   if (isPreflightRequest(event)) {
     handleCors(event, {});
@@ -41,6 +45,12 @@ export default defineEventHandler(async (event) => {
       },
     });
   }
+  if (typeof destination !== 'string') {
+    throw createError({
+      statusCode: 400,
+      statusMessage: 'Destination must be a URL string',
+    });
+  }
 
   // Check if allowed to make the request
   if (!(await isAllowedToMakeRequest(event))) {
@@ -54,26 +64,37 @@ export default defineEventHandler(async (event) => {
   }
 
   // Read body and create token if needed
-  const body = await getBodyBuffer(event);
   const token = await createTokenIfNeeded(event);
 
   // Proxy the request
   try {
-    await specificProxyRequest(event, destination, {
+    return await specificProxyRequest(event, destination, {
       blacklistedHeaders: getBlacklistedHeaders(),
       fetchOptions: {
         redirect: 'follow',
         headers: getProxyHeaders(event.headers),
-        body,
       },
       onResponse(outputEvent, response) {
-        const headers = getAfterResponseHeaders(response.headers, response.url);
+        const headers = getAfterResponseHeaders(
+          response.headers,
+          outputEvent.context.proxyFinalUrl ?? response.url,
+        );
+        if (
+          token ||
+          event.headers.has('x-token') ||
+          event.headers.has('x-cookie') ||
+          event.headers.has('authorization') ||
+          event.headers.has('cookie') ||
+          response.headers.has('set-cookie') ||
+          getQuery(event).proxy_token
+        ) {
+          headers['Cache-Control'] = 'private, no-store';
+        }
         setResponseHeaders(outputEvent, headers);
         if (token) setTokenHeader(event, token);
       },
     });
   } catch (e) {
-    console.log('Error fetching', e);
     throw e;
   }
 });

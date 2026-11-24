@@ -4,7 +4,14 @@ import {
   ProxyOptions,
   getProxyRequestHeaders,
   RequestHeaders,
+  readRawBody,
+  getRequestWebStream,
+  setResponseStatus,
+  setResponseHeader,
 } from 'h3';
+import { fetchUpstream, validateTarget } from './upstream';
+import { upstreamTimeout, setting } from './settings';
+import { sendBody } from './streaming';
 
 const PayloadMethods = new Set(['PATCH', 'POST', 'PUT', 'DELETE']);
 
@@ -44,6 +51,7 @@ export async function specificProxyRequest(
   target: string,
   opts: ProxyOptions & ExtraProxyOptions = {},
 ) {
+  validateTarget(target);
   let body;
   let duplex: Duplex | undefined;
   if (PayloadMethods.has(event.method)) {
@@ -79,24 +87,46 @@ export async function specificProxyRequest(
     opts.fetchOptions?.headers,
     opts.headers,
   );
-  const headerObj = Object.fromEntries([...(fetchHeaders.entries as any)()]);
-  if (process.env.REQ_DEBUG === 'true') {
+  if (setting(event, 'REQ_DEBUG') === 'true') {
     console.log({
       type: 'request',
       method,
-      url: target,
-      headers: headerObj,
+      origin: new URL(target).origin,
     });
   }
 
-  return sendProxy(event, target, {
-    ...opts,
-    fetchOptions: {
+  const { response, finalUrl } = await fetchUpstream(
+    target,
+    {
       method,
       body,
       duplex,
       ...opts.fetchOptions,
       headers: fetchHeaders,
-    },
-  });
+    } as RequestInit,
+    upstreamTimeout(event),
+  );
+  event.context.proxyFinalUrl = finalUrl;
+  setResponseStatus(event, response.status);
+  for (const [name, value] of response.headers) {
+    if (
+      [
+        'content-encoding',
+        'content-length',
+        'connection',
+        'transfer-encoding',
+        'keep-alive',
+        'set-cookie',
+      ].includes(name)
+    ) {
+      continue;
+    }
+    setResponseHeader(event, name, value);
+  }
+  await opts.onResponse?.(event, response);
+  if (event.method === 'HEAD' || !response.body) {
+    await response.body?.cancel();
+    return '';
+  }
+  return sendBody(event, response.body);
 }

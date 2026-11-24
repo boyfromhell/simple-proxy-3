@@ -1,3 +1,5 @@
+import { createError } from 'h3';
+
 const headerMap: Record<string, string> = {
   'X-Cookie': 'Cookie',
   'X-Referer': 'Referer',
@@ -21,6 +23,7 @@ const blacklistedHeaders = [
   'forwarded',
   'x-real-ip',
   'content-length',
+  'x-token',
   ...Object.keys(headerMap),
 ];
 
@@ -70,4 +73,58 @@ export function getAfterResponseHeaders(
 
 export function getBlacklistedHeaders() {
   return blacklistedHeaders;
+}
+
+export function parseMediaHeaders(value: unknown): Record<string, string> {
+  if (value === undefined) {
+    return {};
+  }
+  if (typeof value !== 'string' || value.length > 16384) {
+    throw createError({
+      statusCode: 400,
+      statusMessage: 'Invalid headers format',
+    });
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw createError({
+      statusCode: 400,
+      statusMessage: 'Invalid headers format',
+    });
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw createError({
+      statusCode: 400,
+      statusMessage: 'Headers must be an object of strings',
+    });
+  }
+  const headers = new Headers();
+  try {
+    for (const [key, entry] of Object.entries(parsed)) {
+      if (typeof entry !== 'string') {
+        throw new Error();
+      }
+      if (
+        [
+          'host',
+          'connection',
+          'transfer-encoding',
+          'content-length',
+          'x-token',
+        ].includes(key.toLowerCase()) ||
+        key.toLowerCase().startsWith('cf-')
+      ) {
+        continue;
+      }
+      headers.set(key, entry);
+    }
+  } catch {
+    throw createError({
+      statusCode: 400,
+      statusMessage: 'Headers must contain valid string values',
+    });
+  }
+  return Object.fromEntries(headers);
 }
