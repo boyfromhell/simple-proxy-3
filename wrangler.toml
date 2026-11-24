@@ -2,3 +2,5 @@ name = "simple-proxy-3"
 main = "./.output/server/index.mjs"
 workers_dev = true
 compatibility_date = "2022-09-10"
+
+[previews]

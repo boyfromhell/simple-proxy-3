@@ -13,6 +13,7 @@
     "start": "node .output/server/index.mjs",
     "lint": "eslint --ext .ts src/",
     "lint:fix": "eslint --fix --ext .ts src/",
+    "test": "npm run build:node && node --test tests/*.test.mjs",
     "preinstall": "npx only-allow pnpm"
   },
   "dependencies": {
